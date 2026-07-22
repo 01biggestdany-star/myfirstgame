@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Multiplayer Tic-Tac-Toe</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      background: white;
+      padding: 40px;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      text-align: center;
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 20px;
+      font-size: 2.5em;
+    }
+    #status {
+      font-size: 1.2em;
+      margin: 15px 0;
+      padding: 10px;
+      border-radius: 10px;
+      background: #f0f0f0;
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(3, 120px);
+      gap: 10px;
+      margin: 20px auto;
+    }
+    .cell {
+      width: 120px;
+      height: 120px;
+      background: #f8f9fa;
+      border: 3px solid #dee2e6;
+      border-radius: 15px;
+      font-size: 3em;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .cell:hover:not(.taken) {
+      background: #e9ecef;
+      transform: scale(1.05);
+    }
+    .cell.taken {
+      cursor: not-allowed;
+    }
+    .cell.win {
+      background: #28a745 !important;
+      color: white !important;
+      transform: scale(1.1);
+    }
+    #findGameBtn {
+      padding: 15px 40px;
+      font-size: 1.2em;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-top: 10px;
+    }
+    #findGameBtn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+    }
+    #findGameBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .symbol {
+      display: inline-block;
+      font-size: 0.8em;
+      margin-left: 5px;
+    }
+    .turn-indicator {
+      padding: 5px 15px;
+      border-radius: 20px;
+      background: #667eea;
+      color: white;
+      font-weight: bold;
+    }
+    #gameId {
+      font-size: 0.9em;
+      color: #666;
+      margin-top: 10px;
+    }
+    .waiting {
+      color: #ffc107;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎮 Tic-Tac-Toe</h1>
+    <div id="status">Ready to play!</div>
+    <div id="gameId"></div>
+    <div class="board" id="board">
+      <div class="cell" data-index="0"></div>
+      <div class="cell" data-index="1"></div>
+      <div class="cell" data-index="2"></div>
+      <div class="cell" data-index="3"></div>
+      <div class="cell" data-index="4"></div>
+      <div class="cell" data-index="5"></div>
+      <div class="cell" data-index="6"></div>
+      <div class="cell" data-index="7"></div>
+      <div class="cell" data-index="8"></div>
+    </div>
+    <button id="findGameBtn">🔍 Find Game</button>
+  </div>
+
+  <script>
+    const socket = io();
+    const boardElement = document.getElementById('board');
+    const statusElement = document.getElementById('status');
+    const gameIdElement = document.getElementById('gameId');
+    const findGameBtn = document.getElementById('findGameBtn');
+
+    let currentGameId = null;
+    let mySymbol = null;
+    let isMyTurn = false;
+    let board = Array(9).fill(null);
+    let gameActive = false;
+
+    // Find game
+    findGameBtn.addEventListener('click', () => {
+      findGameBtn.disabled = true;
+      findGameBtn.textContent = 'Searching...';
+      socket.emit('findGame');
+    });
+
+    // Game created
+    socket.on('gameCreated', ({ gameId, symbol }) => {
+      currentGameId = gameId;
+      mySymbol = symbol;
+      gameIdElement.textContent = `📋 Game ID: ${gameId}`;
+      statusElement.innerHTML = `⏳ Waiting for opponent... <span class="waiting">🔄</span>`;
+      findGameBtn.disabled = true;
+      findGameBtn.textContent = 'Waiting...';
+    });
+
+    // Game joined
+    socket.on('gameJoined', ({ gameId, symbol, board: serverBoard }) => {
+      currentGameId = gameId;
+      mySymbol = symbol;
+      board = serverBoard;
+      gameIdElement.textContent = `📋 Game ID: ${gameId}`;
+      updateBoard();
+      statusElement.innerHTML = `🎯 Game starting! You are <strong>${symbol}</strong>`;
+      findGameBtn.style.display = 'none';
+    });
+
+    // Game start
+    socket.on('gameStart', ({ board: serverBoard, currentTurn }) => {
+      board = serverBoard;
+      gameActive = true;
+      isMyTurn = currentTurn === socket.id;
+      updateBoard();
+      updateStatus();
+      findGameBtn.style.display = 'none';
+    });
+
+    // Move made
+    socket.on('moveMade', ({ board: serverBoard, currentTurn }) => {
+      board = serverBoard;
+      isMyTurn = currentTurn === socket.id;
+      updateBoard();
+      updateStatus();
+    });
+
+    // Game over
+    socket.on('gameOver', ({ winner, board: serverBoard, winningCombo }) => {
+      board = serverBoard;
+      gameActive = false;
+      updateBoard();
+      
+      if (winner === 'draw') {
+        statusElement.innerHTML = "🤝 It's a draw!";
+      } else if (winner.player === mySymbol) {
+        statusElement.innerHTML = "🎉 You win! 🎉";
+        highlightWinningCells(winningCombo);
+      } else {
+        statusElement.innerHTML = "😔 You lose!";
+        highlightWinningCells(winningCombo);
+      }
+      
+      findGameBtn.style.display = 'block';
+      findGameBtn.textContent = '🔄 Play Again';
+      findGameBtn.disabled = false;
+    });
+
+    // Player left
+    socket.on('playerLeft', (message) => {
+      statusElement.innerHTML = `⚠️ ${message}`;
+      gameActive = false;
+      findGameBtn.style.display = 'block';
+      findGameBtn.textContent = '🔍 Find New Game';
+      findGameBtn.disabled = false;
+    });
+
+    // Error
+    socket.on('error', (message) => {
+      statusElement.innerHTML = `❌ ${message}`;
+    });
+
+    // Board click
+    boardElement.addEventListener('click', (e) => {
+      const cell = e.target.closest('.cell');
+      if (!cell) return;
+      
+      const index = parseInt(cell.dataset.index);
+      if (!gameActive || !isMyTurn || board[index] !== null) return;
+      
+      socket.emit('makeMove', { gameId: currentGameId, index });
+    });
+
+    // Update board UI
+    function updateBoard() {
+      const cells = document.querySelectorAll('.cell');
+      cells.forEach((cell, index) => {
+        cell.textContent = board[index] || '';
+        cell.className = 'cell';
+        if (board[index]) cell.classList.add('taken');
+      });
+    }
+
+    // Update status
+    function updateStatus() {
+      if (!gameActive) return;
+      const turnText = isMyTurn ? 'Your turn' : "Opponent's turn";
+      const symbolText = mySymbol === 'X' ? '❌' : '⭕';
+      statusElement.innerHTML = `${symbolText} ${turnText}`;
+    }
+
+    // Highlight winning cells
+    function highlightWinningCells(combo) {
+      if (!combo) return;
+      const cells = document.querySelectorAll('.cell');
+      combo.forEach(index => {
+        cells[index].classList.add('win');
+      });
+    }
+
+    // Reset find game button if reconnecting
+    socket.on('connect', () => {
+      if (!currentGameId) {
+        findGameBtn.disabled = false;
+        findGameBtn.textContent = '🔍 Find Game';
+      }
+    });
+  </script>
+</body>
+</html>
